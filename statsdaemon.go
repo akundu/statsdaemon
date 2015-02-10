@@ -35,7 +35,7 @@ type Packet struct {
 type GaugeData struct {
 	Relative bool
 	Negative bool
-	Value    uint64
+	Value    float64
 }
 
 type Uint64Slice []uint64
@@ -85,8 +85,8 @@ func init() {
 var (
 	In              = make(chan *Packet, MAX_UNPROCESSED_PACKETS)
 	counters        = make(map[string]int64)
-	gauges          = make(map[string]uint64)
-	trackedGauges   = make(map[string]uint64)
+	gauges          = make(map[string]float64)
+	trackedGauges   = make(map[string]float64)
 	timers          = make(map[string]Uint64Slice)
 	countInactivity = make(map[string]int64)
 	sets            = make(map[string][]string)
@@ -417,7 +417,7 @@ func parseMessage(data []byte) []*Packet {
 				stringToParse = string(val)
 			}
 
-			gaugeValue, err := strconv.ParseUint(stringToParse, 10, 64)
+			gaugeValue, err := strconv.ParseFloat(stringToParse, 64)
 			if err != nil {
 				log.Printf("ERROR: failed to ParseUint %s - %s", string(val), err)
 				continue
