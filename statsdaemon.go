@@ -74,6 +74,7 @@ var (
 	persistCountKeys = flag.Int64("persist-count-keys", 60, "number of flush-intervals to persist count keys")
 	receiveCounter   = flag.String("receive-counter", "", "Metric name for total metrics received per interval")
 	percentThreshold = Percentiles{}
+    num_procs_to_run = flag.Int("num_cpu", runtime.NumCPU() - 1, "num cpus to run on")
 	prefix           = flag.String("prefix", "", "Prefix for all stats")
 )
 
