@@ -502,8 +502,8 @@ var (
 	percentThreshold = Percentiles{}
     num_procs_to_run = flag.Int("num_cpu", runtime.NumCPU() - 1, "num cpus to run on")
 	prefix           = flag.String("prefix", "", "Prefix for all stats")
-	prefixTimers     = flag.String("prefixTimers", "timers", "Prefix for all timer stats")
-	prefixGauges     = flag.String("prefixGauges", "gauges", "Prefix for all gauges stats")
+	prefixTimers     = flag.String("prefixTimers", "timers.", "Prefix for all timer stats")
+	prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
 )
 
 func init() {
