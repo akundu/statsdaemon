@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+    "sync"
 )
 
 const (
@@ -426,7 +427,10 @@ func udpListener() {
 	}
 	defer listener.Close()
 
+    var wg sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
     for num_udp_runners := 0 ; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
+        wg.Add(1) //track the routines
+
         go func(){
             message := make([]byte, MAX_UDP_PACKET_SIZE)
             for {
@@ -442,6 +446,9 @@ func udpListener() {
             }
         }()
     }
+
+    //wait for the routines to complete
+    wg.Wait()
 }
 
 func monitor() {
