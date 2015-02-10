@@ -260,6 +260,7 @@ func processTimers(buffer *bytes.Buffer, now int64, pctls Percentiles) int64 {
 			sum += value
 		}
 		mean := float64(sum) / float64(len(t))
+		median := t[len(t)/2]
 
 		for _, pct := range pctls {
 			if len(t) > 1 {
@@ -291,6 +292,7 @@ func processTimers(buffer *bytes.Buffer, now int64, pctls Percentiles) int64 {
 		}
 
 		fmt.Fprintf(buffer, "%s.mean %f %d\n", u, mean, now)
+		fmt.Fprintf(buffer, "%s.median %f %d\n", u, median, now)
 		fmt.Fprintf(buffer, "%s.upper %d %d\n", u, max, now)
 		fmt.Fprintf(buffer, "%s.lower %d %d\n", u, min, now)
 		fmt.Fprintf(buffer, "%s.count %d %d\n", u, count, now)
@@ -507,6 +509,5 @@ var (
 )
 
 func init() {
-	flag.Var(&percentThreshold, "percent-threshold",
-		"percentile calculation for timers (0-100, may be given multiple times)")
+	flag.Var(&percentThreshold, "percent-threshold", "percentile calculation for timers (0-100, may be given multiple times)")
 }
