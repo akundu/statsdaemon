@@ -336,6 +336,7 @@ func parseMessage(data []byte) []*Packet {
 		val := input[:index]
 		index++
 
+        prefixToAdd := *prefix;
 		var mtypeStr string
 
 		if input[index] == 'm' {
@@ -347,6 +348,7 @@ func parseMessage(data []byte) []*Packet {
 				continue
 			}
 			mtypeStr = "ms"
+            prefixToAdd = *prefix + *prefixTimers
 		} else {
 			mtypeStr = string(input[index])
 		}
@@ -387,6 +389,7 @@ func parseMessage(data []byte) []*Packet {
 			}
 
 			value = GaugeData{relative, negative, gaugeValue}
+            prefixToAdd = *prefix + *prefixGauges
 		} else if mtypeStr[0] == 's' {
 			value = string(val)
 		} else {
@@ -408,7 +411,8 @@ func parseMessage(data []byte) []*Packet {
 		}
 
 		packet := &Packet{
-			Bucket:   *prefix + string(name),
+			//Bucket:   *prefix + string(name),
+			Bucket:   prefixToAdd + string(name),
 			Value:    value,
 			Modifier: mtypeStr,
 			Sampling: sampleRate,
@@ -427,9 +431,9 @@ func udpListener() {
 	}
 	defer listener.Close()
 
-    var wg sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
+    var udp_routine_handler_wait_group sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
     for num_udp_runners := 0 ; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
-        wg.Add(1) //track the routines
+        udp_routine_handler_wait_group.Add(1) //track the routines
 
         go func(){
             message := make([]byte, MAX_UDP_PACKET_SIZE)
@@ -448,7 +452,7 @@ func udpListener() {
     }
 
     //wait for the routines to complete
-    wg.Wait()
+    udp_routine_handler_wait_group.Wait()
 }
 
 func monitor() {
@@ -498,6 +502,8 @@ var (
 	percentThreshold = Percentiles{}
     num_procs_to_run = flag.Int("num_cpu", runtime.NumCPU() - 1, "num cpus to run on")
 	prefix           = flag.String("prefix", "", "Prefix for all stats")
+	prefixTimers     = flag.String("prefixTimers", "timers", "Prefix for all timer stats")
+	prefixGauges     = flag.String("prefixGauges", "gauges", "Prefix for all gauges stats")
 )
 
 func init() {
