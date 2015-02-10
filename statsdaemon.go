@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	MAX_UNPROCESSED_PACKETS = 1000
+	MAX_UNPROCESSED_PACKETS = 100000
 	MAX_UDP_PACKET_SIZE     = 512
 )
 
@@ -63,24 +63,6 @@ func (p *Percentile) String() string {
 }
 func (a *Percentiles) String() string {
 	return fmt.Sprintf("%v", *a)
-}
-
-var (
-	serviceAddress   = flag.String("address", ":8125", "UDP service address")
-	graphiteAddress  = flag.String("graphite", "127.0.0.1:2003", "Graphite service address (or - to disable)")
-	flushInterval    = flag.Int64("flush-interval", 10, "Flush interval (seconds)")
-	debug            = flag.Bool("debug", false, "print statistics sent to graphite")
-	showVersion      = flag.Bool("version", false, "print version string")
-	persistCountKeys = flag.Int64("persist-count-keys", 60, "number of flush-intervals to persist count keys")
-	receiveCounter   = flag.String("receive-counter", "", "Metric name for total metrics received per interval")
-	percentThreshold = Percentiles{}
-    num_procs_to_run = flag.Int("num_cpu", runtime.NumCPU() - 1, "num cpus to run on")
-	prefix           = flag.String("prefix", "", "Prefix for all stats")
-)
-
-func init() {
-	flag.Var(&percentThreshold, "percent-threshold",
-		"percentile calculation for timers (0-100, may be given multiple times)")
 }
 
 var (
@@ -444,18 +426,22 @@ func udpListener() {
 	}
 	defer listener.Close()
 
-	message := make([]byte, MAX_UDP_PACKET_SIZE)
-	for {
-		n, remaddr, err := listener.ReadFromUDP(message)
-		if err != nil {
-			log.Printf("ERROR: reading UDP packet from %+v - %s", remaddr, err)
-			continue
-		}
+    for num_udp_runners := 0 ; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
+        go func(){
+            message := make([]byte, MAX_UDP_PACKET_SIZE)
+            for {
+                n, remaddr, err := listener.ReadFromUDP(message)
+                if err != nil {
+                    log.Printf("ERROR: reading UDP packet from %+v - %s", remaddr, err)
+                    continue
+                }
 
-		for _, p := range parseMessage(message[:n]) {
-			In <- p
-		}
-	}
+                for _, p := range parseMessage(message[:n]) {
+                    In <- p
+                }
+            }
+        }()
+    }
 }
 
 func monitor() {
@@ -473,7 +459,7 @@ func monitor() {
 			if err := submit(time.Now().Add(period)); err != nil {
 				log.Printf("ERROR: %s", err)
 			}
-		case s := <-In:
+        case s := <-In: //TODO: ideally this should be handled by multiple threads - will change soon
 			packetHandler(s)
 		}
 	}
@@ -492,4 +478,22 @@ func main() {
 
 	go udpListener()
 	monitor()
+}
+
+var (
+	serviceAddress   = flag.String("address", ":8125", "UDP service address")
+	graphiteAddress  = flag.String("graphite", "127.0.0.1:2003", "Graphite service address (or - to disable)")
+	flushInterval    = flag.Int64("flush-interval", 10, "Flush interval (seconds)")
+	debug            = flag.Bool("debug", false, "print statistics sent to graphite")
+	showVersion      = flag.Bool("version", false, "print version string")
+	persistCountKeys = flag.Int64("persist-count-keys", 60, "number of flush-intervals to persist count keys")
+	receiveCounter   = flag.String("receive-counter", "", "Metric name for total metrics received per interval")
+	percentThreshold = Percentiles{}
+    num_procs_to_run = flag.Int("num_cpu", runtime.NumCPU() - 1, "num cpus to run on")
+	prefix           = flag.String("prefix", "", "Prefix for all stats")
+)
+
+func init() {
+	flag.Var(&percentThreshold, "percent-threshold",
+		"percentile calculation for timers (0-100, may be given multiple times)")
 }
