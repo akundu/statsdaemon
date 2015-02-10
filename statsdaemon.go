@@ -92,27 +92,6 @@ var (
 	sets            = make(map[string][]string)
 )
 
-func monitor() {
-	period := time.Duration(*flushInterval) * time.Second
-	ticker := time.NewTicker(period)
-	for {
-		select {
-		case sig := <-signalchan:
-			fmt.Printf("!! Caught signal %d... shutting down\n", sig)
-			if err := submit(time.Now().Add(period)); err != nil {
-				log.Printf("ERROR: %s", err)
-			}
-			return
-		case <-ticker.C:
-			if err := submit(time.Now().Add(period)); err != nil {
-				log.Printf("ERROR: %s", err)
-			}
-		case s := <-In:
-			packetHandler(s)
-		}
-	}
-}
-
 func packetHandler(s *Packet) {
 	if *receiveCounter != "" {
 		v, ok := counters[*receiveCounter]
@@ -474,6 +453,27 @@ func udpListener() {
 
 		for _, p := range parseMessage(message[:n]) {
 			In <- p
+		}
+	}
+}
+
+func monitor() {
+	period := time.Duration(*flushInterval) * time.Second
+	ticker := time.NewTicker(period)
+	for {
+		select {
+		case sig := <-signalchan:
+			fmt.Printf("!! Caught signal %d... shutting down\n", sig)
+			if err := submit(time.Now().Add(period)); err != nil {
+				log.Printf("ERROR: %s", err)
+			}
+			return
+		case <-ticker.C:
+			if err := submit(time.Now().Add(period)); err != nil {
+				log.Printf("ERROR: %s", err)
+			}
+		case s := <-In:
+			packetHandler(s)
 		}
 	}
 }
