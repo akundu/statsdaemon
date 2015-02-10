@@ -35,3 +35,8 @@ Usage of ./statsdaemon:
   -receive-counter="": Metric name for total metrics received per interval
   -version=false: print version string
 ```
+
+Things added
+====================
+* make gauges support floats
+* allow multiple cores to work on reading from UDP + processing the values
