@@ -222,7 +222,7 @@ func processGauges(buffer *bytes.Buffer, now int64) int64 {
 		if ok && c == lastValue {
 			continue
 		}
-		fmt.Fprintf(buffer, "%s %d %d\n", g, c, now)
+		fmt.Fprintf(buffer, "%s %f %d\n", g, c, now)
 		trackedGauges[g] = c
 		num++
 	}
@@ -502,8 +502,8 @@ var (
 	persistCountKeys = flag.Int64("persist-count-keys", 60, "number of flush-intervals to persist count keys")
 	receiveCounter   = flag.String("receive-counter", "", "Metric name for total metrics received per interval")
 	percentThreshold = Percentiles{}
-    num_procs_to_run = flag.Int("num_cpu", runtime.NumCPU() - 1, "num cpus to run on")
-	prefix           = flag.String("prefix", "", "Prefix for all stats")
+    num_procs_to_run = flag.Int("numCPU", runtime.NumCPU() - 1, "num cpus to run on")
+	prefix           = flag.String("prefix", "stats.", "Prefix for all stats")
 	prefixTimers     = flag.String("prefixTimers", "timers.", "Prefix for all timer stats")
 	prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
 )
