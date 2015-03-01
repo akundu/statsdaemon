@@ -218,14 +218,9 @@ func processGauges(buffer *bytes.Buffer, now int64) int64 {
 	var num int64
 
 	for g, c := range gauges {
-		lastValue, ok := trackedGauges[g]
-
-		if ok && c == lastValue {
-			continue
-		}
 		fmt.Fprintf(buffer, "%s %f %d\n", g, c, now)
-		trackedGauges[g] = c
 		num++
+        delete(gauges, g)
 	}
 	return num
 }
