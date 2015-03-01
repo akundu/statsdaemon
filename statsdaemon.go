@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
-    "sync"
 )
 
 const (
@@ -67,6 +67,7 @@ func (a *Percentiles) String() string {
 }
 
 var (
+	PacketIn        = make(chan []byte, MAX_UNPROCESSED_PACKETS)
 	In              = make(chan *Packet, MAX_UNPROCESSED_PACKETS)
 	counters        = make(map[string]int64)
 	gauges          = make(map[string]float64)
@@ -315,7 +316,7 @@ func parseMessage(data []byte) []*Packet {
 		input = line
 
 		index := bytes.IndexByte(input, ':')
-		if index < 0 || index == len(input) - 1 {
+		if index < 0 || index == len(input)-1 {
 			if *debug {
 				log.Printf("ERROR: failed to parse line: %s\n", string(line))
 			}
@@ -328,7 +329,7 @@ func parseMessage(data []byte) []*Packet {
 		input = input[index:]
 
 		index = bytes.IndexByte(input, '|')
-		if index < 0 || index == len(input) - 1 {
+		if index < 0 || index == len(input)-1 {
 			if *debug {
 				log.Printf("ERROR: failed to parse line: %s\n", string(line))
 			}
@@ -338,7 +339,7 @@ func parseMessage(data []byte) []*Packet {
 		val := input[:index]
 		index++
 
-        prefixToAdd := *prefix;
+		prefixToAdd := *prefix
 		var mtypeStr string
 
 		if input[index] == 'm' {
@@ -350,7 +351,7 @@ func parseMessage(data []byte) []*Packet {
 				continue
 			}
 			mtypeStr = "ms"
-            prefixToAdd = *prefix + *prefixTimers
+			prefixToAdd = *prefix + *prefixTimers
 		} else {
 			mtypeStr = string(input[index])
 		}
@@ -391,7 +392,7 @@ func parseMessage(data []byte) []*Packet {
 			}
 
 			value = GaugeData{relative, negative, gaugeValue}
-            prefixToAdd = *prefix + *prefixGauges
+			prefixToAdd = *prefix + *prefixGauges
 		} else if mtypeStr[0] == 's' {
 			value = string(val)
 		} else {
@@ -424,6 +425,27 @@ func parseMessage(data []byte) []*Packet {
 	return output
 }
 
+/*
+func processPacketSentIn() {
+	var wg sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
+	for num_udp_runners := 0; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
+		wg.Add(1) //track the routines
+		go func() {
+			for {
+				s := <-PacketIn
+				for _, p := range parseMessage(s) {
+					In <- p
+				}
+			}
+            wg.Done()
+		}()
+	}
+
+	//wait for the routines to complete
+	wg.Wait()
+}
+*/
+
 func udpListener() {
 	address, _ := net.ResolveUDPAddr("udp", *serviceAddress)
 	log.Printf("listening on %s", address)
@@ -433,28 +455,30 @@ func udpListener() {
 	}
 	defer listener.Close()
 
-    var udp_routine_handler_wait_group sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
-    for num_udp_runners := 0 ; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
-        udp_routine_handler_wait_group.Add(1) //track the routines
+	var wg sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
+	for num_udp_runners := 0; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
+		wg.Add(1) //track the routines
 
-        go func(){
-            message := make([]byte, MAX_UDP_PACKET_SIZE)
-            for {
-                n, remaddr, err := listener.ReadFromUDP(message)
-                if err != nil {
-                    log.Printf("ERROR: reading UDP packet from %+v - %s", remaddr, err)
-                    continue
-                }
+		go func() {
+			message := make([]byte, MAX_UDP_PACKET_SIZE)
+			for {
+				n, remaddr, err := listener.ReadFromUDP(message)
+				if err != nil {
+					log.Printf("ERROR: reading UDP packet from %+v - %s", remaddr, err)
+					continue
+				}
 
+				//PacketIn <- message[:n]
                 for _, p := range parseMessage(message[:n]) {
-                    In <- p
-                }
-            }
-        }()
-    }
+					In <- p
+				}
+			}
+            wg.Done()
+		}()
+	}
 
-    //wait for the routines to complete
-    udp_routine_handler_wait_group.Wait()
+	//wait for the routines to complete
+	wg.Wait()
 }
 
 func monitor() {
@@ -472,7 +496,7 @@ func monitor() {
 			if err := submit(time.Now().Add(period)); err != nil {
 				log.Printf("ERROR: %s", err)
 			}
-        case s := <-In: //TODO: ideally this should be handled by multiple threads - will change soon
+		case s := <-In: //TODO: ideally this should be handled by multiple threads - will change soon
 			packetHandler(s)
 		}
 	}
@@ -485,11 +509,13 @@ func main() {
 		fmt.Printf("statsdaemon v%s (built w/%s)\n", VERSION, runtime.Version())
 		return
 	}
+    runtime.GOMAXPROCS(*num_procs_to_run)
 
 	signalchan = make(chan os.Signal, 1)
 	signal.Notify(signalchan, syscall.SIGTERM)
 
 	go udpListener()
+	//go processPacketSentIn()
 	monitor()
 }
 
@@ -502,7 +528,7 @@ var (
 	persistCountKeys = flag.Int64("persist-count-keys", 60, "number of flush-intervals to persist count keys")
 	receiveCounter   = flag.String("receive-counter", "", "Metric name for total metrics received per interval")
 	percentThreshold = Percentiles{}
-    num_procs_to_run = flag.Int("numCPU", runtime.NumCPU() - 1, "num cpus to run on")
+	num_procs_to_run = flag.Int("numCPU", runtime.NumCPU()-1, "num cpus to run on")
 	prefix           = flag.String("prefix", "stats.", "Prefix for all stats")
 	prefixTimers     = flag.String("prefixTimers", "timers.", "Prefix for all timer stats")
 	prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
