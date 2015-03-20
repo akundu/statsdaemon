@@ -19,6 +19,9 @@ import (
 	"time"
 )
 
+var LogInfo *log.Logger
+var LogError *log.Logger
+
 const (
 	MAX_UNPROCESSED_PACKETS = 100000
 	MAX_UDP_PACKET_SIZE     = 512
@@ -33,17 +36,23 @@ type Packet struct {
 	Sampling float32
 }
 
+type DiffData struct {
+	Last_value  float64
+	Last_update time.Time
+	Last_diff   float64
+}
+
 type GaugeData struct {
 	Relative bool
 	Negative bool
 	Value    float64
 }
 
-type Uint64Slice []uint64
+type Float64Slice []float64
 
-func (s Uint64Slice) Len() int           { return len(s) }
-func (s Uint64Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s Uint64Slice) Less(i, j int) bool { return s[i] < s[j] }
+func (s Float64Slice) Len() int           { return len(s) }
+func (s Float64Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s Float64Slice) Less(i, j int) bool { return s[i] < s[j] }
 
 type Percentiles []*Percentile
 type Percentile struct {
@@ -67,14 +76,17 @@ func (a *Percentiles) String() string {
 }
 
 var (
-	PacketIn        = make(chan []byte, MAX_UNPROCESSED_PACKETS)
 	In              = make(chan *Packet, MAX_UNPROCESSED_PACKETS)
 	counters        = make(map[string]int64)
 	gauges          = make(map[string]float64)
 	trackedGauges   = make(map[string]float64)
-	timers          = make(map[string]Uint64Slice)
+	timers          = make(map[string]Float64Slice)
 	countInactivity = make(map[string]int64)
 	sets            = make(map[string][]string)
+
+	//PacketIn        = make(chan []byte, MAX_UNPROCESSED_PACKETS) //the channel that allows the ability to immediately download data from UDP and feed it out to be parsed instead of parsing and then feeding to go handlers to process
+	PacketIn     = make(chan string, MAX_UNPROCESSED_PACKETS) //the channel that allows the ability to immediately download data from UDP and feed it out to be parsed instead of parsing and then feeding to go handlers to process
+	trackedDiffs = make(map[string]float64)                   //track diffs in value to previous values - so that diffs are tracked and not the whole value
 )
 
 func packetHandler(s *Packet) {
@@ -90,10 +102,10 @@ func packetHandler(s *Packet) {
 	case "ms":
 		_, ok := timers[s.Bucket]
 		if !ok {
-			var t Uint64Slice
+			var t Float64Slice
 			timers[s.Bucket] = t
 		}
-		timers[s.Bucket] = append(timers[s.Bucket], s.Value.(uint64))
+		timers[s.Bucket] = append(timers[s.Bucket], s.Value.(float64))
 	case "g":
 		gaugeValue, _ := gauges[s.Bucket]
 
@@ -147,10 +159,11 @@ func submit(deadline time.Time) error {
 	client, err := net.Dial("tcp", *graphiteAddress)
 	if err != nil {
 		if *debug {
-			log.Printf("WARNING: resetting counters when in debug mode")
+			LogInfo.Printf("WARNING: resetting counters when in debug mode")
 			processCounters(&buffer, now)
 			processGauges(&buffer, now)
 			processTimers(&buffer, now, percentThreshold)
+			//processDiffs(&buffer, now)
 			processSets(&buffer, now)
 		}
 		errmsg := fmt.Sprintf("dialing %s failed - %s", *graphiteAddress, err)
@@ -177,7 +190,7 @@ func submit(deadline time.Time) error {
 			if len(line) == 0 {
 				continue
 			}
-			log.Printf("DEBUG: %s", line)
+			LogInfo.Printf("DEBUG: %s", line)
 		}
 	}
 
@@ -187,7 +200,7 @@ func submit(deadline time.Time) error {
 		return errors.New(errmsg)
 	}
 
-	log.Printf("sent %d stats to %s", num, *graphiteAddress)
+	LogInfo.Printf("sent %d stats to %s", num, *graphiteAddress)
 
 	return nil
 }
@@ -214,13 +227,26 @@ func processCounters(buffer *bytes.Buffer, now int64) int64 {
 	return num
 }
 
+/*
+func processGauges(buffer *bytes.Buffer, now int64) int64 {
+    var num int64
+
+    for g, c := range gauges {
+        fmt.Fprintf(buffer, "%s %f %d\n", g, c, now)
+        num++
+        delete(gauges, g)
+    }
+    return num
+}
+*/
+
 func processGauges(buffer *bytes.Buffer, now int64) int64 {
 	var num int64
 
-	for g, c := range gauges {
+	for g, c := range trackedDiffs {
 		fmt.Fprintf(buffer, "%s %f %d\n", g, c, now)
 		num++
-        delete(gauges, g)
+		delete(gauges, g)
 	}
 	return num
 }
@@ -252,7 +278,7 @@ func processTimers(buffer *bytes.Buffer, now int64, pctls Percentiles) int64 {
 		maxAtThreshold := max
 		count := len(t)
 
-		sum := uint64(0)
+		sum := float64(0)
 		for _, value := range t {
 			sum += value
 		}
@@ -278,24 +304,28 @@ func processTimers(buffer *bytes.Buffer, now int64, pctls Percentiles) int64 {
 			var tmpl string
 			var pctstr string
 			if pct.float >= 0 {
-				tmpl = "%s.upper_%s %d %d\n"
+				tmpl = "%s.upper_%s %0.2f %d\n"
 				pctstr = pct.str
 			} else {
-				tmpl = "%s.lower_%s %d %d\n"
+				tmpl = "%s.lower_%s %0.2f %d\n"
 				pctstr = pct.str[1:]
 			}
 			fmt.Fprintf(buffer, tmpl, u, pctstr, maxAtThreshold, now)
 		}
 
-		fmt.Fprintf(buffer, "%s.mean %f %d\n", u, mean, now)
-		fmt.Fprintf(buffer, "%s.median %v %d\n", u, median, now)
-		fmt.Fprintf(buffer, "%s.upper %d %d\n", u, max, now)
-		fmt.Fprintf(buffer, "%s.lower %d %d\n", u, min, now)
+		fmt.Fprintf(buffer, "%s.mean %0.2f %d\n", u, mean, now)
+		fmt.Fprintf(buffer, "%s.median %0.2f %d\n", u, median, now)
+		fmt.Fprintf(buffer, "%s.upper %0.2f %d\n", u, max, now)
+		fmt.Fprintf(buffer, "%s.lower %0.2f %d\n", u, min, now)
 		fmt.Fprintf(buffer, "%s.count %d %d\n", u, count, now)
 
 		delete(timers, u)
 	}
 	return num
+}
+
+func parseMessageString(data string) []*Packet {
+	return parseMessage([]byte(data))
 }
 
 func parseMessage(data []byte) []*Packet {
@@ -313,7 +343,7 @@ func parseMessage(data []byte) []*Packet {
 		index := bytes.IndexByte(input, ':')
 		if index < 0 || index == len(input)-1 {
 			if *debug {
-				log.Printf("ERROR: failed to parse line: %s\n", string(line))
+				LogError.Printf("ERROR: failed to parse line: %s\n", string(line))
 			}
 			continue
 		}
@@ -326,7 +356,7 @@ func parseMessage(data []byte) []*Packet {
 		index = bytes.IndexByte(input, '|')
 		if index < 0 || index == len(input)-1 {
 			if *debug {
-				log.Printf("ERROR: failed to parse line: %s\n", string(line))
+				LogError.Printf("ERROR: failed to parse line: %s\n", string(line))
 			}
 			continue
 		}
@@ -341,7 +371,7 @@ func parseMessage(data []byte) []*Packet {
 			index++
 			if index >= len(input) || input[index] != 's' {
 				if *debug {
-					log.Printf("ERROR: failed to parse line: %s\n", string(line))
+					LogError.Printf("ERROR: failed to parse line: %s\n", string(line))
 				}
 				continue
 			}
@@ -362,7 +392,7 @@ func parseMessage(data []byte) []*Packet {
 		if mtypeStr[0] == 'c' {
 			value, err = strconv.ParseInt(string(val), 10, 64)
 			if err != nil {
-				log.Printf("ERROR: failed to ParseInt %s - %s", string(val), err)
+				LogError.Printf("ERROR: failed to ParseInt %s - %s on %s", string(val), err, line)
 				continue
 			}
 		} else if mtypeStr[0] == 'g' {
@@ -382,7 +412,7 @@ func parseMessage(data []byte) []*Packet {
 
 			gaugeValue, err := strconv.ParseFloat(stringToParse, 64)
 			if err != nil {
-				log.Printf("ERROR: failed to ParseUint %s - %s", string(val), err)
+				LogError.Printf("ERROR: failed to ParseFloat %s - %s", string(val), err)
 				continue
 			}
 
@@ -391,9 +421,9 @@ func parseMessage(data []byte) []*Packet {
 		} else if mtypeStr[0] == 's' {
 			value = string(val)
 		} else {
-			value, err = strconv.ParseUint(string(val), 10, 64)
+			value, err = strconv.ParseFloat(string(val), 64)
 			if err != nil {
-				log.Printf("ERROR: failed to ParseUint %s - %s", string(val), err)
+				LogError.Printf("ERROR: failed to ParseFloat %s - %s on %s", string(val), err, line)
 				continue
 			}
 		}
@@ -420,7 +450,6 @@ func parseMessage(data []byte) []*Packet {
 	return output
 }
 
-/*
 func processPacketSentIn() {
 	var wg sync.WaitGroup //setup a way to wait for the routines to complete that are listening to the UDP connection
 	for num_udp_runners := 0; num_udp_runners < *num_procs_to_run; num_udp_runners++ {
@@ -428,18 +457,18 @@ func processPacketSentIn() {
 		go func() {
 			for {
 				s := <-PacketIn
-				for _, p := range parseMessage(s) {
+				LogInfo.Printf("got data = (%d)\n", len(s))
+				for _, p := range parseMessageString(s) {
 					In <- p
 				}
 			}
-            wg.Done()
+			wg.Done()
 		}()
 	}
 
 	//wait for the routines to complete
 	wg.Wait()
 }
-*/
 
 func udpListener() {
 	address, _ := net.ResolveUDPAddr("udp", *serviceAddress)
@@ -463,15 +492,17 @@ func udpListener() {
 					continue
 				}
 
-				//PacketIn <- message[:n]
-                for _, p := range parseMessage(message[:n]) {
-					In <- p
-				}
+				//LogInfo.Printf("sent data (%d)\n", n)
+				PacketIn <- string(message[:n])
+				/*
+				   for _, p := range parseMessage(message[:n]) {
+				       In <- p
+				   }
+				*/
 			}
-            wg.Done()
+			wg.Done()
 		}()
 	}
-
 	//wait for the routines to complete
 	wg.Wait()
 }
@@ -504,13 +535,13 @@ func main() {
 		fmt.Printf("statsdaemon v%s (built w/%s)\n", VERSION, runtime.Version())
 		return
 	}
-    runtime.GOMAXPROCS(*num_procs_to_run)
+	runtime.GOMAXPROCS(*num_procs_to_run)
 
 	signalchan = make(chan os.Signal, 1)
 	signal.Notify(signalchan, syscall.SIGTERM)
 
 	go udpListener()
-	//go processPacketSentIn()
+	go processPacketSentIn()
 	monitor()
 }
 
@@ -530,5 +561,8 @@ var (
 )
 
 func init() {
+	LogInfo = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	LogError = log.New(os.Stderr, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+
 	flag.Var(&percentThreshold, "percent-threshold", "percentile calculation for timers (0-100, may be given multiple times)")
 }
