@@ -200,7 +200,7 @@ func submit(deadline time.Time) error {
 		return errors.New(errmsg)
 	}
 
-	LogInfo.Printf("sent %d stats to %s", num, *graphiteAddress)
+	//LogInfo.Printf("sent %d stats to %s", num, *graphiteAddress)
 
 	return nil
 }
@@ -457,7 +457,6 @@ func processPacketSentIn() {
 		go func() {
 			for {
 				s := <-PacketIn
-				LogInfo.Printf("got data = (%d)\n", len(s))
 				for _, p := range parseMessageString(s) {
 					In <- p
 				}
@@ -492,13 +491,7 @@ func udpListener() {
 					continue
 				}
 
-				//LogInfo.Printf("sent data (%d)\n", n)
 				PacketIn <- string(message[:n])
-				/*
-				   for _, p := range parseMessage(message[:n]) {
-				       In <- p
-				   }
-				*/
 			}
 			wg.Done()
 		}()
@@ -557,7 +550,7 @@ var (
 	num_procs_to_run = flag.Int("numCPU", runtime.NumCPU()-1, "num cpus to run on")
 	prefix           = flag.String("prefix", "stats.", "Prefix for all stats")
 	prefixTimers     = flag.String("prefixTimers", "timers.", "Prefix for all timer stats")
-	prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
+    prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
 )
 
 func init() {
