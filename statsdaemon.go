@@ -231,7 +231,7 @@ func processCounters(buffer *bytes.Buffer, now int64) int64 {
 func processGauges(buffer *bytes.Buffer, now int64) int64 {
     var num int64
 
-    for g, c := range gauges {
+    for g, c := range trackedDiffs {
         fmt.Fprintf(buffer, "%s %f %d\n", g, c, now)
         num++
         delete(gauges, g)
@@ -243,7 +243,7 @@ func processGauges(buffer *bytes.Buffer, now int64) int64 {
 func processGauges(buffer *bytes.Buffer, now int64) int64 {
 	var num int64
 
-	for g, c := range trackedDiffs {
+	for g, c := range gauges {
 		fmt.Fprintf(buffer, "%s %f %d\n", g, c, now)
 		num++
 		delete(gauges, g)
