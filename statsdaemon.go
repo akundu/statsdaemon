@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -469,9 +470,72 @@ func processPacketSentIn() {
 	wg.Wait()
 }
 
+var RESPONSE = []byte("Hello")
+var DOT = []byte(".")
+
+func httpHandler(w http.ResponseWriter, r *http.Request) {
+	path_string := r.URL.Path
+	//sample url = "/a/b/c/d/time/stat_name/200" - output stat will be a.b.c.d.stat_name = 200 or a.b.c.d.stat_name|ms 200
+
+	var error_string string
+	var error_code int
+	path_elements := strings.Split(path_string, "/")
+	if len(path_elements) < 4 {
+		error_string = "Invalid number of splits provided in URL to stat"
+		error_code = http.StatusBadRequest
+		http.Error(w, error_string, error_code)
+		return
+	}
+
+	//find out type of request (count|time|gauge)
+	stat_type := string(path_elements[len(path_elements)-3])
+	//stat_amount
+	stat_amount_string := string(path_elements[len(path_elements)-1])
+
+	//build the stat string
+	var stat_bytes []byte
+	for i := 1; i < len(path_elements)-3; i++ {
+		if i > 1 {
+			stat_bytes = append(stat_bytes, DOT...)
+		}
+		stat_bytes = append(stat_bytes, []byte(path_elements[i])...)
+	}
+	if len(stat_bytes) > 0 {
+		stat_bytes = append(stat_bytes, DOT...)
+	}
+	stat_bytes = append(stat_bytes, []byte(path_elements[len(path_elements)-2])...)
+
+	var statsd_string string
+	switch stat_type {
+	case "count":
+		statsd_string = fmt.Sprintf("%s:%s|c", string(stat_bytes), stat_amount_string)
+	case "time":
+		statsd_string = fmt.Sprintf("%s:%s|ms", string(stat_bytes), stat_amount_string)
+	case "gauge":
+		statsd_string = fmt.Sprintf("%s:%s|g", string(stat_bytes), stat_amount_string)
+	default:
+		error_code = http.StatusBadRequest
+		http.Error(w, "Invalid stat_type format", error_code)
+		return
+	}
+
+	//track the stat
+	PacketIn <- statsd_string
+
+	fmt.Fprintf(w, "%s", fmt.Sprintf("OK: %s", statsd_string))
+	return
+}
+
+func httpListener() {
+	interface_port := *serviceAddress //setup the TCP address to be the same as the UDP port for now
+	log.Printf("listening on HTTP %s", interface_port)
+	http.HandleFunc("/", httpHandler)
+	http.ListenAndServe(interface_port, nil)
+}
+
 func udpListener() {
 	address, _ := net.ResolveUDPAddr("udp", *serviceAddress)
-	log.Printf("listening on %s", address)
+	log.Printf("listening on UDP %s", address)
 	listener, err := net.ListenUDP("udp", address)
 	if err != nil {
 		log.Fatalf("ERROR: ListenUDP - %s", err)
@@ -534,6 +598,7 @@ func main() {
 	signal.Notify(signalchan, syscall.SIGTERM)
 
 	go udpListener()
+	go httpListener()
 	go processPacketSentIn()
 	monitor()
 }
@@ -550,7 +615,7 @@ var (
 	num_procs_to_run = flag.Int("numCPU", runtime.NumCPU()-1, "num cpus to run on")
 	prefix           = flag.String("prefix", "stats.", "Prefix for all stats")
 	prefixTimers     = flag.String("prefixTimers", "timers.", "Prefix for all timer stats")
-    prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
+	prefixGauges     = flag.String("prefixGauges", "gauges.", "Prefix for all gauges stats")
 )
 
 func init() {
