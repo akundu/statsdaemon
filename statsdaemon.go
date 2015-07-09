@@ -345,7 +345,10 @@ func parseMessage(data []byte) []*Packet {
 		//if there are illegal characters in the input, ignore stat string
 		for _, c := range input {
 			c_int_value := int(c)
-			if c_int_value < 33 || c_int_value > 122 {
+			if c_int_value < 33 || c_int_value > 175 {
+                if *debug {
+                    LogError.Printf("DEBUG: ignoring %s due to c value = %c\n", input, c)
+                }
 				ignore_stat_string = true
 				break
 			}
