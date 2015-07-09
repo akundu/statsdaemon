@@ -340,6 +340,19 @@ func parseMessage(data []byte) []*Packet {
 			continue
 		}
 		input = line
+		ignore_stat_string := false
+
+		//if there are illegal characters in the input, ignore stat string
+		for _, c := range input {
+			c_int_value := int(c)
+			if c_int_value < 43 || c_int_value > 122 {
+				ignore_stat_string = true
+				break
+			}
+		}
+		if ignore_stat_string == true {
+			continue
+		}
 
 		index := bytes.IndexByte(input, ':')
 		if index < 0 || index == len(input)-1 {
